@@ -1,0 +1,409 @@
+class GitChangesUI
+	isa IReferencePaneUI
+[
+	constructor (parent:IReferenceUIParent, program:ProgramClass) end
+
+	def control -> this.frameCtrl
+	function onshowsource (fileID, filename) end
+	function realize () end
+	function realizeRemote () end
+
+	function cmdClearRemote () end
+	function cmdPublishRepo () end
+	function cmdRevertAll () end
+	function cmdRevertFile () end
+	function cmdSettings () end
+	function cmdSyncWithRemote () end
+
+	function commitCtrl.onaction () end
+	function syncCtrl.onaction () end
+
+	function summaryCtrl.onchange () end
+
+	var parent:IReferenceUIParent
+	var program:ProgramClass
+	var sourceID:String
+	var sourceName:String
+	var showingDiffs:Bool
+	var hasChanges:Bool
+
+	var frameCtrl:LayoutGridControlType
+	var diffCtrl:TextDiffControlType
+	var noChangesCtrl:TextControlType
+
+	var branchCtrl:ButtonControlType
+	var syncCtrl:ButtonControlType
+	var menuCtrl:ButtonControlType
+
+	var diffLineCtrl:TextControlType
+	var summaryCtrl:TextControlType
+	var descCtrl:TextControlType
+	var commitCtrl:ButtonControlType
+]
+
+function GitChangesUI.constructor (parent:IReferenceUIParent, program:ProgramClass) do
+	this.parent = parent
+	this.program = program
+	this.showingDiffs = false
+
+	this.noChangesCtrl = TextControlType([
+		format="markdown",
+		data=
+			"""
+			No Changes
+			----------
+			There are no uncommitted changes in this file.
+			"""
+	])
+
+	this.diffCtrl = TextDiffControlType()
+
+	this.diffLineCtrl = TextControlType([
+		align = "left middle",
+		data = "No changes"
+	])
+
+	this.branchCtrl = ButtonControlType([
+		align = "left middle",
+		label = "main",
+	])
+
+	this.syncCtrl = ButtonControlType([
+		align = "left middle",
+		label = "Push",
+	])
+
+	this.menuCtrl = ButtonControlType([
+		align = "right middle",
+		label = "Menu",
+		content = [
+			[	label="Settings...",			fn onaction () do this.cmdSettings() end	],
+			[	label="Clear Remote",			fn onaction () do this.cmdClearRemote() end	],
+			[	line=true																	],
+			[	label="Discard Changes",		fn onaction () do this.cmdRevertFile() end	],
+			[	label="Discard All Changes",	fn onaction () do this.cmdRevertAll() end	],
+		]
+	])
+
+	var headerCtrl = LayoutGridControlType([
+		background = "Primary_Paper",
+		padding = "8px",
+		rows = 1,
+		colWidth = [ "120px", "120px", "auto", "120px" ],
+		content = [
+			[	col=0,	row=0,		control=this.branchCtrl	],
+			[	col=1,	row=0,		control=this.syncCtrl ],
+			[	col=3,	row=0,		control=this.menuCtrl ],
+		]
+	])
+
+	this.summaryCtrl = TextControlType([
+		mode = "edit",
+		placeholder = "Summary (required)",
+	])
+
+	this.descCtrl = TextControlType([
+		mode = "editMultiline",
+		placeholder = "Description",
+	])
+
+	this.commitCtrl = ButtonControlType([
+		align = "left middle",
+		label = "Commit"
+	])
+
+	var commitLayoutCtrl = LayoutGridControlType([
+		background = "Primary_Paper",
+		padding = "8px",
+		rows = 3,
+		rowHeight = [ "48px", "auto", "48px" ],
+		colWidth = [ "120px", "auto", ],
+		content = [
+			[	col=0,	row=0,	width=2,	control=this.summaryCtrl	],
+			[	col=0,	row=1,	width=2,	control=this.descCtrl		],
+			[	col=0,	row=2,	width=1,	control=this.commitCtrl		],
+			[	col=1,	row=2,	width=1,	control=this.diffLineCtrl	],
+		]
+	])
+
+	this.frameCtrl = LayoutGridControlType([
+		rows = 3,
+		rowHeight = [ "48px", "auto", "240px" ],
+		cols = 1,
+		content = [
+			[				col=0,	row=0,	control=headerCtrl			],
+			[	id="diffs",	col=0,	row=1,	control=this.noChangesCtrl	],
+			[				col=0,	row=2,	control=commitLayoutCtrl	],
+		]
+	])
+
+	this.realize()
+end
+
+function GitChangesUI.onshowsource (fileID, filename) do
+	this.sourceID = fileID
+	this.sourceName = filename
+	this.realize()
+end
+
+function GitChangesUI.realize () do
+	if !this.sourceID do
+		this.diffCtrl.data = null
+		return false
+	end
+
+	//	Show diffs for current file.
+
+	var changes = this.program.calcGitChanges()
+	var curDiff = this.program.calcGitFileDiff(this.sourceName)
+
+	if curDiff do
+
+		if !this.showingDiffs do
+			this.frameCtrl.setAt("diffs", this.diffCtrl)
+			this.showingDiffs = true
+		end
+
+		this.diffCtrl.data = [ hunks=curDiff ]
+	else do
+
+		if this.showingDiffs do
+			this.frameCtrl.setAt("diffs", this.noChangesCtrl)
+			this.showingDiffs = false
+		end
+	end
+
+	//	Set line describing the current set of changes (count of files)
+
+	var modifiedCount = changes.summary.modified
+	var addedCount = changes.summary.added
+	var deletedCount = changes.summary.deleted
+
+	var line = [
+		if addedCount > 0 -> String(addedCount, "# file added|files added"),
+		if modifiedCount > 0 -> String(modifiedCount, "# file modified|files modified"),
+		if deletedCount > 0 -> String(deletedCount, "# file deleted|files deleted")
+	].joined(" • ")
+
+	this.diffLineCtrl.data = line || "No changes"
+	this.hasChanges = if line -> true else -> false
+
+	//	Gray out Commit button if no changes
+
+	if this.hasChanges do
+		this.commitCtrl.disabled = false
+	else do
+		this.commitCtrl.disabled = true
+	end
+
+	this.realizeRemote()
+end
+
+function GitChangesUI.realizeRemote () do
+	var status = this.program.calcGitStatusFull()
+	if !status.remoteURL do
+		this.syncCtrl.label = "Publish"
+	else do
+		this.syncCtrl.label = "Sync"
+	end
+end
+
+function GitChangesUI.cmdClearRemote () do
+	var status = this.program.calcGitStatusFull()
+	if !status.remoteURL do
+		return false
+	end
+
+	var result = UI.dialog("Are you sure you wish to disconnect from " + status.remoteURL + "?")
+	if !result do
+		return false
+	end
+
+	result = Git.clearRemote(this.program.id, [ noExceptions=true ])
+	this.program.invalidateGit()
+	this.realizeRemote()
+end
+
+function GitChangesUI.cmdPublishRepo () do
+
+	//	Make a list of destinations
+
+	var destList = []
+
+	//	Add all GitHub destinations
+
+	var gitHub = User.listConnections("api", "github")
+	for dest in gitHub do
+		destList.append([
+			id = dest.id,
+			label = dest.name,
+		])
+	end
+
+	if !destList.length do
+		UI.dialog("Go to Settings and add a connection to GitHub.")
+		return false
+	end
+
+	//	Pick a connection
+
+	var connectionCtrl = DropdownControlType([
+		content = destList
+	])
+
+	var repoCtrl = DropdownControlType([
+		content = [
+			[	id="newRepo",		label="New Repo"		],
+			[	id="repoURL",		label="Repo at URL"		],
+		]
+	])
+
+	var formCtrl = FormControlType([
+		content = [
+			[	id="connection",	label="Publish To",		control=connectionCtrl	],
+			[	id="repoType",		label="Repo Type",		control=repoCtrl		],
+			[	id="repoName",		label="Repo Name",		type = String,		hidden=true		],
+			[	id="repoURL",		label="Remote URL",		type = String			],
+		],
+		data = [
+			connection = gitHub[0].id,
+			repoType = "repoURL",
+		]
+	])
+
+	fn repoCtrl.onchange () do
+		if repoCtrl.data == "newRepo" do
+			formCtrl.getAt("repoName").hidden = false
+			formCtrl.getAt("repoURL").hidden = true
+		else do
+			formCtrl.getAt("repoName").hidden = true
+			formCtrl.getAt("repoURL").hidden = false
+		end
+	end
+	
+	var result = UI.dialog(formCtrl, [], [
+		title = "Publish Repo",
+		fn onaction (dlg, dlgResult) do
+			//	LATER: Validate repo name
+			return formCtrl.data
+		end
+	])
+	if !result do
+		return false
+	end
+
+	if result.repoType == "newRepo" do
+		var result = Git.publishToGitHub(result.connection, this.program.id, this.program.name, [
+			noExceptions = true
+		])
+		if result.status == "error" do
+			UI.dialog(result.message)
+			return false
+		end
+	else do
+		var result = Git.publishToRemote(this.program.id, result.repoURL, [
+			connectionID = result.connection,
+			noExceptions = true
+		])
+		if result.status == "error" do
+			UI.dialog(result.message)
+			return false
+		else if result.push.status == "error" do
+			UI.dialog("Connection to remote successful. Pull required.")
+		end
+	end
+
+	this.program.invalidateGit()
+	this.realizeRemote()
+end
+
+function GitChangesUI.cmdRevertAll () do
+	if !this.hasChanges do
+		return false
+	end
+
+	//	null mean all files
+	Git.revert(this.program.id, null)
+end
+
+function GitChangesUI.cmdRevertFile () do
+	if !this.sourceID || !this.hasChanges do
+		return false
+	end
+
+	var sources = [
+		[	name=this.sourceName ]
+	]
+
+	Git.revert(this.program.id, sources)
+end
+
+function GitChangesUI.cmdSettings () do
+
+	var status = this.program.calcGitStatusFull()
+	var remoteURL = status.remoteURL
+
+	var formCtrl = FormControlType([
+		content = [
+			[	id="remote",	label="Remote URL",		type=String,	readOnly=true	],
+		]
+		data = [
+			remote = remoteURL || "(None)"
+		]
+	])
+
+	var result = UI.dialog(formCtrl, [], [
+		title = "Repo Settings"
+	])
+	if !result do
+		return false
+	end
+
+end
+
+function GitChangesUI.cmdSyncWithRemote () do
+
+	if this.program.calcGitHasChanges() do
+		UI.dialog("Commit changes before synchronizing with remote.")
+		return false
+	end
+
+	var result = Git.pull(this.program.id, [ noExceptions=true ])
+	if result.status == "error" do
+		UI.dialog(result.message)
+		return false
+	end
+
+	result = Git.push(this.program.id, [ noExceptions=true ])
+	if result.status == "error" do
+		UI.dialog(result.message)
+		return false
+	end
+end
+
+function GitChangesUI.commitCtrl.onaction () do
+
+	var summary = this.summaryCtrl.data || "Changes"
+
+	var result = Git.commit(this.program.id, summary, null, [
+		description = this.descCtrl.data
+	])
+
+	this.program.invalidateGit()
+	this.summaryCtrl.data = ""
+	this.descCtrl.data = ""
+	this.realize()
+	this.parent.onrealizesourcelist()
+end
+
+function GitChangesUI.syncCtrl.onaction () do
+	var status = this.program.calcGitStatusFull()
+	if !status.remoteURL do
+		this.cmdPublishRepo()
+	else do
+		this.cmdSyncWithRemote()
+	end
+end
+
+function GitChangesUI.summaryCtrl.onchange () do
+end

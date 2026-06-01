@@ -1,0 +1,50 @@
+class GitCreateUI
+	isa IReferencePaneUI
+[
+	constructor (parent:IReferenceUIParent, program:ProgramClass) end
+
+	def control -> this.frameCtrl
+	function onshowsource (fileID, filename) do end
+	function realize () do end
+
+	function createCtrl.onaction () end
+
+	var parent:IReferenceUIParent
+	var program:ProgramClass
+	var frameCtrl:LayoutGridControlType
+	var createCtrl:ButtonControlType
+]
+
+function GitCreateUI.constructor (parent:IReferenceUIParent, program:ProgramClass) do
+	this.parent = parent
+	this.program = program
+
+	var headerCtrl = TextControlType([
+		format = "markdown"
+		data = 
+			"""
+			No Repo
+			-------
+			There is no repo associated with this program.
+			"""
+	])
+
+	this.createCtrl = ButtonControlType([
+		label = "Create Repo"
+	])
+
+	this.frameCtrl = LayoutGridControlType([
+		rows = 3,
+		rowHeight = [ "240px", "80px", "auto" ],
+		cols = 1,
+		content = [
+			[	col=0,	row=0,		control=headerCtrl	],
+			[	col=0,	row=1,		control=this.createCtrl	],
+		],
+	])
+end
+
+function GitCreateUI.createCtrl.onaction () do
+	Git.createRepo(this.program.id)
+	this.program.fireOnChange()
+end

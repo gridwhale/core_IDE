@@ -1,0 +1,71 @@
+class GitHistoryUI
+	isa IReferencePaneUI
+[
+	constructor (parent:IReferenceUIParent, program:ProgramClass) end
+
+	def control -> this.frameCtrl
+	function onshowsource (fileID, filename) end
+	function realize () end
+	function realizeSelection () end
+
+	function historyCtrl.onselectionchange () do this.realizeSelection() end
+
+	var parent:IReferenceUIParent
+	var program:ProgramClass
+
+	var frameCtrl:LayoutGridControlType
+	var historyCtrl:ListboxControlType
+	var diffCtrl:TextDiffControlType
+]
+
+function GitHistoryUI.constructor (parent:IReferenceUIParent, program:ProgramClass) do
+	this.parent = parent
+	this.program = program
+
+	this.historyCtrl = ListboxControlType([
+		style = "list",
+		itemBorder = [ top="narrow", left="narrow", right="narrow", bottom="thinLine" ],
+	])
+
+	this.diffCtrl = TextDiffControlType([
+	])
+
+	this.frameCtrl = LayoutGridControlType([
+		rows = 2,
+		rowHeight = [ "240px", "auto" ],
+		colWidth = [ "auto" ],
+		content = [
+			[	col=0,	row=0,	control=this.historyCtrl	],
+			[	col=0,	row=1,	control=this.diffCtrl		],
+		]
+	])
+
+	this.realize()
+end
+
+function GitHistoryUI.onshowsource (fileID, filename) do
+end
+
+function GitHistoryUI.realize () do
+	var history = Git.listCommits(this.program.id)
+	this.historyCtrl.data = history.map([
+		id = .id,
+		name = .summary,
+		desc = String(.authoredBy) + " • " + String(.authoredOn, "R") + " • " + right(.id, 8)
+	])
+
+	if !this.historyCtrl.selection do
+		this.historyCtrl.selection = history[0].id
+	end
+
+	this.realizeSelection()
+end
+
+function GitHistoryUI.realizeSelection () do
+	if this.historyCtrl.selection do
+		var diffs = Git.diffCommit(this.program.id, this.historyCtrl.selection)
+		this.diffCtrl.data = diffs.files
+	else do
+		this.diffCtrl.data = null
+	end
+end

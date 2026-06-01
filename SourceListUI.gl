@@ -1,0 +1,169 @@
+|	SOURCE LIST UI
+|
+|	Copyright (c) 2023 GridWhale Corporation. All Rights Reserved.
+--------------------------------------------------------------------------------
+
+class SourceListUI [
+
+	constructor () end
+
+	function realize (sourceList, readOnly) end
+
+	def control -> this.frameCtrl
+
+	----------------------------------------------------------------------------
+
+	function CmdDelete (entry) end
+	function CmdRename (entry) end
+
+	function createButton (label:String) end
+
+	function addButton_onclick () end
+	function getSelection () -> this.sourceListCtrl.selection
+	function getSelectionData () -> this.sourceListCtrl.selectionData
+	function updateSelection () end
+	function moveDownButton_onclick () end
+	function moveUpButton_onclick () end
+	function sourceList_onchange () end
+	function sourceList_oncontextmenu () end
+	function sourceList_onupload (fileID:String) end
+
+	var frameCtrl
+
+	var sourceListCtrl
+	var readOnly
+	var addCtrl
+	var moveUpCtrl
+	var moveDownCtrl
+
+	var onselectionchange
+	var onaddsource
+	var ondeletesource
+	var onrenamesource
+	var onmoveup
+	var onmovedown
+	var onupload
+]
+
+function SourceListUI.constructor () do
+
+	this.sourceListCtrl = UI.create("listbox")
+	this.sourceListCtrl.background = "Neutral_Paper"
+	this.sourceListCtrl.border = "narrow"
+	this.sourceListCtrl.onselectionchange = fn()->this.sourceList_onchange()
+	this.sourceListCtrl.oncontextmenu = fn()->this.sourceList_oncontextmenu()
+	this.sourceListCtrl.onupload = fn(fileID:String)->this.sourceList_onupload(fileID)
+
+	this.addCtrl = this.createButton("Add")
+	this.addCtrl.onclick = fn()->this.addButton_onclick()
+
+	this.moveUpCtrl = this.createButton(Char(0x25b2))
+	this.moveUpCtrl.onclick = fn()->this.moveUpButton_onclick()
+
+	this.moveDownCtrl = this.createButton(Char(0x25bc))
+	this.moveDownCtrl.onclick = fn()->this.moveDownButton_onclick()
+
+	this.frameCtrl = UI.create("layoutGrid")
+	this.frameCtrl.background = "Primary_Paper"
+	this.frameCtrl.rows = 2
+	this.frameCtrl.cols = 4
+	this.frameCtrl.colSize = ["auto", "60px", "60px", "60px"]
+	this.frameCtrl.rowSize = ["40px", "auto"]
+	this.frameCtrl.content = [
+		[ col=1,  row=0,            control=this.addCtrl ],
+		[ col=2,  row=0,            control=this.moveUpCtrl ],
+		[ col=3,  row=0,            control=this.moveDownCtrl ],
+		[ col=0,  row=1,  width=4,  control=this.sourceListCtrl ]
+	]	
+end
+
+function SourceListUI.realize (sourceList, readOnly) do
+	this.readOnly = readOnly
+
+	this.sourceListCtrl.uploadEnabled = if readOnly -> false else -> ["application/zip"]
+	this.sourceListCtrl.data = sourceList
+	this.updateSelection()
+end
+
+function SourceListUI.CmdDelete (entry) do
+	if !this.readOnly && this.ondeletesource do
+		this.ondeletesource(entry.id)
+	end
+end
+
+function SourceListUI.CmdRename (entry) do
+	if !this.readOnly && this.onrenamesource do
+		this.onrenamesource(entry.id)
+	end
+end
+
+function SourceListUI.addButton_onclick () do
+	if !this.readOnly && this.onaddsource do
+		this.onaddsource()
+	end
+end
+
+function SourceListUI.moveDownButton_onclick () do
+	if !this.readOnly && this.sourceListCtrl.selection do
+		if this.onmovedown do
+			this.onmovedown(this.sourceListCtrl.selection)
+		end
+	end
+end
+
+function SourceListUI.moveUpButton_onclick () do
+	if !this.readOnly && this.sourceListCtrl.selection do
+		if this.onmoveup do
+			this.onmoveup(this.sourceListCtrl.selection)
+		end
+	end
+end
+
+function SourceListUI.updateSelection () do
+	if !this.sourceListCtrl.selectionData do
+		this.sourceListCtrl.selection = this.sourceListCtrl.data[0].id
+	end
+end
+
+function SourceListUI.sourceList_onchange () do
+	if this.onselectionchange do
+		this.onselectionchange()
+	end
+end
+
+function SourceListUI.sourceList_oncontextmenu () do
+	var entry = this.sourceListCtrl.selectionData
+	if !this.readOnly && entry do
+
+		var contextMenu = UI.create("menu")
+		contextMenu.content = [
+			[ label="Rename",   onclick=fn()->this.CmdRename(entry) ],
+			[ label="Delete",   onclick=fn()->this.CmdDelete(entry) ]
+		]
+
+		this.sourceListCtrl.showMenu(contextMenu)
+	end
+end
+
+function SourceListUI.sourceList_onupload (fileID:String) do
+	if this.onupload do
+		this.onupload(fileID)
+	end
+end
+
+function SourceListUI.createButton (label:String) do
+
+	|	We use a text control rather than a button control because (for now)
+	|	we have more control over the look.
+
+	var buttonCtrl = UI.create("text")
+	buttonCtrl.background = "Primary_Paper"
+	buttonCtrl.data= label
+	buttonCtrl.align = "center middle"
+	buttonCtrl.onhover = [
+		background="Primary",
+		color="Neutral_Paper"
+	]
+
+	return buttonCtrl
+end

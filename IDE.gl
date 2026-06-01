@@ -1,0 +1,51 @@
+|	GRIDWHALE IDE
+|
+|	Version 6
+|	Copyright (c) 2023 GridWhale Corporation. All Rights Reserved.
+--------------------------------------------------------------------------------
+
+using Data
+using Code
+using UI
+using User
+
+using Clang
+using Git
+
+var filename = System.args.file
+if filename == "" do
+	filename = "/archive/programs/Hello, World"
+end
+
+var program = ProgramClass(filename)
+if program.programDS.fileType != "application/x-gridProgram" do
+	UI.dialog("Sorry, " + filename + " is not a GridWhale program file.")
+	return null
+end
+
+var workspace = WorkspaceUI(program)
+
+var commands = [
+	[ label="Run",				onclick=fn()->workspace.CmdRun() ],
+]
+
+var sendTo = [
+	[	label="Clone to Home Folder",
+
+		function onaction () do
+			workspace.CmdClone()
+		end
+	],
+	[	label="Download as Zip File",
+
+		function onaction () do
+			workspace.CmdExport()
+		end
+	],
+]
+
+UI.setCommands(commands)
+UI.setSendTo(sendTo)
+UI.show(workspace.control)
+UI.run()
+return 0

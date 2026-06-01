@@ -1,0 +1,373 @@
+|	PROGRAM CLASS
+|
+|	Copyright (c) 2023 GridWhale Corporation. All Rights Reserved.
+--------------------------------------------------------------------------------
+
+class ProgramClass [
+
+	constructor (gridID) end
+
+	def id -> this.programDS.datasetID
+	def name -> this.programDS.name
+	def environment -> this.programDesc.environment
+
+	function addSourceFile (name, fileType, fileData) end
+	function deleteSourceFile (id) end
+	function fireOnChange () do if this.onchange do this.onchange() end end
+	function findSourceFile (name):String end
+	function getSourceList ():table of SourceListRecord end
+	function moveSourceFileDown (id) end
+	function moveSourceFileUp (id) end
+	function renameSourceFile (id, newName) end
+	function replaceAll (newProgramDesc, newSources) end
+
+	function cloneToHome () end
+	function calcGitChanges () do this.refreshGit() return this.gitChanges end
+	function calcGitFileDiff (name) end
+	function calcGitHasChanges () do this.refreshGit() return this.gitChanges.summary.filesChanged > 0 end
+	function calcGitStatus ():GitStatusType end
+	function calcGitStatusFull () do this.refreshGit() return this.gitStatus end
+	function invalidateGit () end
+	function refreshGit () end
+	function repoNameToFilename (repoName:String):String end
+
+	enum GitStatusType [ Unknown, None, Create, Enabled ]
+
+	schema SourceChangeRecord [
+		key name:String							|	For repo purposes, the filename is the key
+		var fileID:String						|	Current fileID ("" if deleted)
+		var modified:Bool						|	Modified relative to HEAD
+		var deleted:Bool						|	Deleted
+		var added:Bool							|	New file
+
+		var source								|	Full source to the file, if we have it.
+		var diff								|	Diff of the file from HEAD
+	]
+
+	----------------------------------------------------------------------------
+
+	function load () end
+
+	var programDS
+	var onchange
+
+	var programDesc
+	var readOnly
+
+	var gitEnabled:GitStatusType = GitStatus.Unknown
+	var gitStatus
+	var gitChanges
+]
+
+schema SourceListRecord [
+	var id:String                                           
+	var name:String
+	var type:String
+
+	var title:String
+	var marker:String
+]
+
+function ProgramClass.constructor (gridID) do
+
+	this.programDS = Data.open(gridID)
+	this.programDS.onchange = fn () do
+		this.load()
+
+		if this.onchange do
+			this.onchange()
+		end
+	end
+	
+	this.load()
+end
+
+function ProgramClass.load () do
+
+	this.programDesc = this.programDS.getValue()
+	this.readOnly = !this.programDS.can("modify")
+	this.refreshGit()
+end
+
+function ProgramClass.addSourceFile (name, fileType, fileData) do
+
+	if this.findSourceFile(name) do
+		error("Filename already exists: " + name + ".")
+	end
+
+	| Create a new source file as a child of the main program
+	| descriptor.
+
+	var newSourceDS = Data.create(this.programDS.datasetID, name,
+		null,
+		[mediaType=fileType]
+	)
+
+	newSourceDS.setACL(this.programDS.acl)
+	newSourceDS.setValue(fileData)
+
+	| Add it to the list of source files
+
+	var sourceList = this.programDesc.sources
+ 
+	sourceList.append([
+		filePath=newSourceDS.datasetID,
+		name=name,
+		type=fileType
+	])
+
+	this.programDS.setAt("sources", sourceList)
+
+	return newSourceDS.datasetID
+end
+
+function ProgramClass.calcGitStatus ():GitStatusType do
+	this.refreshGit()
+	return this.gitEnabled
+end
+
+function ProgramClass.deleteSourceFile (id) do
+
+	var sourceList = this.programDesc.sources
+
+	|	Remove from the list of sources.
+
+	sourceList = sourceList.filter(fn(entry) do
+		return FilePathToGridID(entry.filePath) != id
+	end)
+
+	this.programDS.setAt("sources", sourceList)
+
+	|	Delete the actual file.
+
+	Data.delete(id)
+end
+
+function ProgramClass.findSourceFile (name):String do
+
+	for entry in this.programDesc.sources do
+
+		if entry.name == name do
+			return FilePathToGridID(entry.filePath)
+		end
+	end
+
+	return ""
+end
+
+function ProgramClass.getSourceList ():table of SourceListRecord do
+
+	this.refreshGit()
+
+	//	Keep track of the files that were modified
+
+	var modifiedFiles = Dictionary()
+	var changes = this.gitChanges
+	for entry in changes.changedFiles do
+		var name = this.repoNameToFilename(entry.name)
+		modifiedFiles.setAt(name, true)
+	end
+
+	|	NOTE: We need to preserve the order listed in programDesc.sources.
+	|	That's why we don't use a key--because it would change the order.
+
+	var Result:table of SourceListRecord = Table(SourceListRecord)
+
+	for entry in this.programDesc.sources do
+
+		| We need to convert the filePath from /Grid.files/XXX to a
+		| GridID of the form /file/XXX
+
+		var gridID = FilePathToGridID(entry.filePath)
+
+		| Add to table.
+
+		Result.insert([
+			id=gridID,
+			name=entry.name,
+			title=entry.name,
+
+			type=entry.type,
+			marker=if modifiedFiles[entry.name] -> "dot"
+		])
+	end
+
+	return Result
+end
+
+function ProgramClass.moveSourceFileDown (id) do
+	
+	var sourceList = this.programDesc.sources
+
+	var oldPos = null
+	for entry in sourceList do
+		if FilePathToGridID(entry.filePath) == id do
+			oldPos = $i
+		end
+	end
+
+	if oldPos && oldPos + 1 < sourceList.length do
+		var temp = sourceList[oldPos + 1]
+		sourceList[oldPos + 1] = sourceList[oldPos]
+		sourceList[oldPos] = temp
+
+		this.programDS.setAt("sources", sourceList)
+	end
+end
+
+function ProgramClass.moveSourceFileUp (id) do
+	
+	var sourceList = this.programDesc.sources
+
+	var oldPos = null
+	for entry in sourceList do
+		if FilePathToGridID(entry.filePath) == id do
+			oldPos = $i
+		end
+	end
+
+	if oldPos && oldPos > 0 do
+		var temp = sourceList[oldPos - 1]
+		sourceList[oldPos - 1] = sourceList[oldPos]
+		sourceList[oldPos] = temp
+
+		this.programDS.setAt("sources", sourceList)
+	end
+end
+
+function ProgramClass.calcGitFileDiff (name) do
+	var changes = this.calcGitChanges()
+	for entry in changes.files do
+		if this.repoNameToFilename(entry.repoPath) == name do
+			return entry.hunks
+		end
+	end
+
+	return null
+end
+
+function ProgramClass.invalidateGit () do
+	this.gitEnabled = GitStatus.Unknown
+	this.gitStatus = null
+	this.gitChanges = null
+end
+
+function ProgramClass.refreshGit () do
+	if this.gitEnabled == GitStatus.Unknown do
+		this.gitStatus = Git.getStatus(this.id)
+		if this.gitStatus.inRepo do
+			this.gitEnabled = GitStatus.Enabled
+			this.gitChanges = Git.diff(this.id, [], [ returnChangedFiles=true ])
+		else do
+			this.gitEnabled = GitStatus.Create
+			this.gitChanges = null
+		end
+	end
+end
+
+function ProgramClass.renameSourceFile (id, newName) do
+	if newName == "" do
+		newName = "Source File"
+	end
+
+	|	Rename the source file.
+
+	var sourceCodeDS = Data.open(id)
+	sourceCodeDS.setName(newName)
+
+	|	Change the name in the program list.
+
+	var sourceList = this.programDesc.sources
+	for entry in sourceList do
+		if FilePathToGridID(entry.filePath) == id do
+			entry.name = newName
+		end
+	end
+
+	this.programDS.setAt("sources", sourceList)
+end
+
+function ProgramClass.replaceAll (newProgramDesc, newSources) do
+
+	|	First we delete all existing files (later we should move them to Limbo).
+
+	var sourceList = this.programDesc.sources
+	for entry in sourceList do
+		var gridID = FilePathToGridID(entry.filePath)
+		Data.delete(gridID)
+	end
+
+	|	Write all the source files.
+
+	var sources = []
+	for entry in newSources do
+		var newSourceDS = Data.create(this.programDS.datasetID, entry.name,
+			null,
+			[mediaType=entry.type]
+		)
+
+		newSourceDS.setACL(this.programDS.acl)
+		newSourceDS.setValue(entry.data)
+
+		sources.append([
+			filePath=newSourceDS.datasetID,
+			name=entry.name,
+			type=entry.type
+		])
+	end
+
+	|	Now write the program descriptor.
+
+	this.programDS.setValue([
+		environment=newProgramDesc.environment,
+		name=newProgramDesc.name,
+		sources=sources,
+		uiType="consoleUI"
+	])
+end
+
+function ProgramClass.cloneToHome () do
+
+	var cloneDS = Data.create("~/home", this.name, "data", [ fileType="application/x-gridProgram" ])
+
+	|	Now save all the source files.
+
+	var newSourceList = []
+	var sourceList = this.getSourceList()
+	for entry in sourceList do
+		var sourceDS = Data.open(entry.id)
+		var newSourceDS = Data.create(cloneDS.datasetID, entry.title, "text", [ fileType="text/x-gridLang" ])
+		newSourceDS.setValue(sourceDS.getValue())
+
+		newSourceList.append([
+			filePath=sourceDS.datasetID,
+			name=entry.name,
+			type=entry.type
+		])
+	end
+
+	var newProgramDesc = this.programDS.getValue().copy()
+	newProgramDesc.sources = newSourceList
+	cloneDS.setValue(newProgramDesc)
+
+end
+
+--------------------------------------------------------------------------------
+|	UTILITIES
+--------------------------------------------------------------------------------
+
+function ProgramClass.repoNameToFilename (repoName:String):String ->
+	if this.environment == "gridLang" && repoName.endsWith(".gl")
+		-> repoName.sliced(0, -3)
+	else
+		-> repoName
+
+function FilePathToGridID (filePath):String do
+	if filePath.startsWith("/Grid.files/") do
+		return "/file/" + filePath.slice(12)
+	else if filePath.startsWith("/file/") do
+		return filePath
+	else do
+		error("Not a filePath: " + filePath)
+	end
+end

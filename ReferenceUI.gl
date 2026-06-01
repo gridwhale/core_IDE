@@ -1,0 +1,151 @@
+|	REFERENCE UI
+|
+|	Copyright (c) 2023 GridWhale Corporation. All Rights Reserved.
+--------------------------------------------------------------------------------
+
+using GridManLib
+
+class ReferenceUI [
+
+	constructor (parent:IReferenceUIParent, program:ProgramClass) end
+
+	function onshowsource (fileID, filename) end
+	function onsourcechange () end
+	function realize () end
+
+	def control -> this.frameCtrl
+
+	----------------------------------------------------------------------------
+
+	def CORE_REFERENCE -> "/archive/Documentation/03. GridWhale Reference"
+
+	var frameCtrl:LayoutGridControlType
+	var tabCtrl:HorizontalTabsControlType
+
+	var parent:IReferenceUIParent
+	var program:ProgramClass
+	var curSource:String
+	var curSourceName:String
+	var curTab:String
+	var gitStatus:ProgramClass.GitStatusType
+
+	var manual:GridManualClass
+	var docCtrl:GridManualUI
+
+	var changesCtrl:IReferencePaneUI?
+	var historyCtrl:IReferencePaneUI?
+]
+
+class IReferencePaneUI [
+	def control -> null
+	function onshowsource (fileID, filename) do end
+	function realize () do end
+]
+
+function ReferenceUI.constructor (parent:IReferenceUIParent, program:ProgramClass) do
+
+	this.parent = parent
+	this.program = program
+	this.manual = GridManualClass(this.CORE_REFERENCE)
+	this.docCtrl = GridManualUI(this.manual)
+
+	this.curTab = "coreRef"
+	this.gitStatus = ProgramClass.GitStatusType.Unknown
+	
+	this.tabCtrl = HorizontalTabsControlType([
+		content = [
+			[	id="coreRef",		label="Reference" ],
+		]
+		data = this.curTab,
+	])
+
+	function this.tabCtrl.onchange () -> this.realize()
+
+	this.frameCtrl = LayoutGridControlType([
+		background = "Neutral_Paper",
+		rows = 2,
+		rowHeight = [ "40px", "auto" ],
+		colWidth = [ "auto" ],
+		content = [
+			[					row=0,	col=0,			control=this.tabCtrl		],
+			[	id="content",	row=1,	col=0,			control=this.docCtrl.control		],
+		]
+	])
+
+	this.realize()
+end
+
+function ReferenceUI.onshowsource (fileID, filename) do
+	this.curSource = fileID
+	this.curSourceName = filename
+
+	if this.curTab == "gitChanges" do
+		this.changesCtrl.onshowsource(fileID, filename)
+	else if this.curTab == "gitHistory" do
+		this.historyCtrl.onshowsource(fileID, filename)
+	end
+end
+
+function ReferenceUI.onsourcechange () do
+	//	If the source code has changed, and we're showing diffs,
+	//	we need to update.
+
+	if this.curTab == "gitChanges" do
+		this.changesCtrl.realize()
+	end
+end
+
+function ReferenceUI.realize () do
+
+	var gs = this.program.calcGitStatus()
+	if gs != this.gitStatus do
+		if gs == ProgramClass.GitStatusType.Enabled do
+			this.tabCtrl.content = [
+				[	id="coreRef",		label="Reference"	],
+				[	id="gitChanges",	label="Changes"		],
+				[	id="gitHistory",	label="History"		],
+			]
+
+			this.changesCtrl = GitChangesUI(this.parent, this.program)
+			this.historyCtrl = GitHistoryUI(this.parent, this.program)
+		else do
+			this.tabCtrl.content = [
+				[	id="coreRef",		label="Reference" ],
+				[	id="gitChanges",	label="Changes"		],
+				[	id="gitHistory",	label="History"		],
+			]
+
+			this.changesCtrl = GitCreateUI(this.parent, this.program)
+			this.historyCtrl = GitCreateUI(this.parent, this.program)
+		end
+
+		this.curTab = ""
+		this.gitStatus = gs
+
+		if this.gitStatus == ProgramClass.GitStatusType.None 
+				&& this.tabCtrl.data in [ "gitChanges", "gitHistory" ] do
+			this.tabCtrl.data = "coreRef"
+		end
+	end
+
+	var newTab = this.tabCtrl.data
+	if newTab != this.curTab do
+		if newTab == "coreRef" do
+			this.frameCtrl.setAt("content", this.docCtrl.control)
+		else if newTab == "gitChanges" do
+			this.changesCtrl.onshowsource(this.curSource, this.curSourceName)
+			this.frameCtrl.setAt("content", this.changesCtrl.control)
+		else if newTab == "gitHistory" do
+			this.historyCtrl.onshowsource(this.curSource, this.curSourceName)
+			this.frameCtrl.setAt("content", this.historyCtrl.control)
+		end
+		this.curTab = newTab
+	end
+
+	if this.curTab == "gitChanges" do
+		this.changesCtrl.realize()
+	else if this.curTab == "gitHistory" do
+		this.historyCtrl.realize()
+	end
+
+end

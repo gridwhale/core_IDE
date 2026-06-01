@@ -1,0 +1,362 @@
+|	WORKSPACE UI
+|
+|	Copyright (c) 2023 GridWhale Corporation. All Rights Reserved.
+--------------------------------------------------------------------------------
+
+class WorkspaceUI
+	isa IReferenceUIParent
+[
+
+	constructor (program:ProgramClass) end
+
+	def control -> this.frameCtrl
+
+	----------------------------------------------------------------------------
+
+	function CmdAddSource () end
+	function CmdDeleteSource (id:String) end
+	function CmdMoveSourceDown (id:String) end
+	function CmdMoveSourceUp (id:String) end
+	function CmdRenameSource (id:String) end
+	function CmdRun () end
+	function CmdClone () end
+	function CmdExport () end
+	function CmdImport (fileID:String) end
+
+	function realize () end
+	function realizeSource () end
+	function realizeSourceList () end
+
+	function sourceListCtrl.onselectionchange (e) end
+
+	function onrealizesourcelist () do this.realizeSourceList() end
+
+	var program:ProgramClass
+	var openFileInfo:dictionary[String] of OpenFileRecord
+
+	var frameCtrl:LayoutGridControlType
+	var sourceListCtrl:SourceListUI
+	var editorCtrl:TextLinesControlType
+	var referenceCtrl:ReferenceUI
+
+	var curFileID
+
+	schema OpenFileRecord [
+		var scrollPosY:Integer
+	]
+]
+
+class IReferenceUIParent [
+	function onrealizesourcelist () do end
+]
+
+function WorkspaceUI.constructor (program:ProgramClass) do
+
+	this.program = program
+	this.program.onchange = fn()->this.realize()
+
+	----------------------------------------------------------------------------
+	|	Create the source list control
+
+	this.sourceListCtrl = SourceListUI()
+	this.sourceListCtrl.onaddsource = fn()->this.CmdAddSource()
+	this.sourceListCtrl.ondeletesource = fn(id:String)->this.CmdDeleteSource(id)
+	this.sourceListCtrl.onmoveup = fn(id:String)->this.CmdMoveSourceUp(id)
+	this.sourceListCtrl.onmovedown = fn(id:String)->this.CmdMoveSourceDown(id)
+	this.sourceListCtrl.onrenamesource = fn(id:String)->this.CmdRenameSource(id)
+	this.sourceListCtrl.onupload = fn(fileID:String)->this.CmdImport(fileID)
+
+	----------------------------------------------------------------------------
+	|	Create the source editor
+
+	this.editorCtrl = TextLinesControlType([
+		border = "thinLine",
+		disabled = this.program.readOnly
+	])
+
+	----------------------------------------------------------------------------
+	|	Create the reference pane
+
+	this.referenceCtrl = ReferenceUI(this, this.program)
+	
+	----------------------------------------------------------------------------
+	|	Create the frame
+
+	this.frameCtrl = LayoutGridControlType([
+		rows = 1,
+		colWidth = [
+			"260px",
+			"min:260px",
+			[ width="auto", behavior="resize" ],
+		],
+		content = [
+			[ col=0,  row=0,            control=this.sourceListCtrl.control ],
+			[ col=1,  row=0,   			control=this.editorCtrl ],
+			[ col=2,  row=0,			control=this.referenceCtrl.control ],
+		]
+	])
+
+	this.realize()
+end
+
+function WorkspaceUI.CmdRun () do
+	if this.program.environment == "clang" do
+
+		var result = Clang.compile(this.program.id)
+		if result.status != "ok" do
+			UI.dialog(result.errors)
+			return null
+		end
+
+		Code.terminate(this.program.id)
+		UI.navigate("program.hexm?id=" + this.program.id)
+	else do
+
+		var compileResult = Code.compile(this.program.id)
+		if compileResult.status != "OK" do
+			UI.dialog(compileResult.errors[0])
+			return null
+		end
+
+		if compileResult.programID do
+			Code.terminate(this.program.id)
+			UI.navigate("program.hexm?id=" + this.program.id)
+		end
+	end
+end
+
+function WorkspaceUI.CmdAddSource () do
+	schema NewFileRecord [
+		var name:String as "File Name"
+	]
+
+	var result = UI.dialog(NewFileRecord, [ ], [
+		title = "Add Source File",
+		fn onaction (dlg, dlgResult) do
+			if !dlg.data.name do
+				dlg.error = "Specify a valid filename"
+				return DialogResult.continue
+			else if this.program.findSourceFile(dlg.data.name) do
+				dlg.error = "Filename already exists."
+				return DialogResult.continue
+			end
+
+			return dlg.data
+		end
+	])
+	if !result do
+		return false
+	end
+
+	var fileType = 
+		if this.program.environment == "gridLang"
+			-> "text/x-gridLang"
+		else if this.program.environment == "clang"
+			-> 
+				if result.name.endsWith(".c")
+					-> "text/x-csrc"
+				else if result.name.endsWith(".h")
+					-> "text/x-chdr"
+				else
+					-> "text/plain"
+		else
+			-> error("Unknown environment: " + this.program.environment)
+
+	var fileData = 
+		if this.program.environment == "gridLang"
+			-> "| Source File"
+		else
+			-> ""
+
+	this.program.addSourceFile(result.name, fileType, fileData)
+end
+
+function WorkspaceUI.CmdDeleteSource (id:String) do
+	if this.program.programDesc.sources.length == 1 do
+		UI.dialog("Cannot delete the last source file.")
+		return 0
+	end
+
+	var sourceCodeDS = Data.open(id)
+	if sourceCodeDS.getValue() != "" do
+		UI.dialog("Source file must be empty before it can be deleted.")
+		return 0
+	end
+
+	this.referenceCtrl.onshowsource("", "")
+	this.program.deleteSourceFile(id)
+end
+
+function WorkspaceUI.CmdClone () do
+
+	this.program.cloneToHome()
+	UI.dialog("Cloned " + this.program.name + " to Home folder.")
+end
+
+function WorkspaceUI.CmdExport () do
+	var sourceList = this.program.getSourceList()
+	
+	var exportDS = Data.open("SRC_" + this.program.id, "container")
+	exportDS.setName(this.program.name + ".zip")
+	exportDS.setValue(null)
+
+	|	Export each source file
+
+	for entry in sourceList do
+		var sourceDS = Data.open(entry.id)
+
+		var filename = entry.title
+		if this.program.environment == "gridLang" && !filename.endsWith(".gl") do
+			filename = filename + ".gl"
+		end
+
+		exportDS.insert(filename, "text/plain", sourceDS.getValue())
+	end
+
+	|	Export the program descriptor
+
+	exportDS.insert(".programDesc", this.program.programDesc)
+
+	UI.navigate(exportDS.getDownloadURL(), [ newTab=true ])
+end
+
+function WorkspaceUI.CmdImport (fileID:String) do
+	var archiveDS = Data.open(fileID)
+	var archiveDir = archiveDS.getValue()
+
+	|	First ask the user
+
+	var sourceList = archiveDir.getColumn("name").join(", " + Char(10))
+	if !UI.dialog("Do you wish to replace all source files with:" + Char(10) + sourceList) do
+		return false
+	end
+
+	|	Load the .programDesc entry.
+
+	var programDesc = deserialize(archiveDS.getAt(".programDesc"))
+	if !programDesc do
+		UI.dialog("Unable to find .programDesc.")
+		return false
+	end
+
+	|	Now make sure all sources are there
+
+	var sourceFiles = []
+	for sourceEntry in programDesc.sources do
+		var sourceName = if programDesc.environment == "gridLang" -> sourceEntry.name + ".gl" else -> sourceEntry.name
+		var sourceFile = archiveDS.getAt(sourceName)
+		if !sourceFile do
+			UI.dialog("Unable to find ", sourceName)
+			return false
+		end
+
+		sourceFiles.append([ name=sourceEntry.name, data=sourceFile, type=sourceEntry.type ])
+	end
+
+	|	Now replace all files.
+
+	this.program.replaceAll(programDesc, sourceFiles)
+
+	|	Update
+
+	|this.sourceListCtrl.selection = null
+	| RealizeProgramDesc(program)
+
+	|	Delete the uploaded zip file because we don't need it.
+
+	Data.delete(fileID)
+end
+
+function WorkspaceUI.CmdMoveSourceDown (id:String) do
+	this.program.moveSourceFileDown(id)
+end
+
+function WorkspaceUI.CmdMoveSourceUp (id:String) do
+	this.program.moveSourceFileUp(id)
+end
+
+function WorkspaceUI.CmdRenameSource (id:String) do
+	var sourceCodeDS = Data.open(id)
+		
+	var result = UI.dialog(schema [var Name:String], [ Name=sourceCodeDS.name ], [ title="Rename" ])
+	if !result do
+		return 0
+	end
+
+	if result.Name == "" do
+		result.Name = "Source File"
+	end
+
+	this.program.renameSourceFile(id, result.Name)
+end
+
+function WorkspaceUI.realize () do
+	this.program.invalidateGit()
+	this.realizeSourceList()
+	this.referenceCtrl.realize()
+	this.realizeSource()
+end
+
+function WorkspaceUI.realizeSource () do
+	if !this.sourceListCtrl.getSelectionData() do
+		return false
+	end
+
+	var sourceID = this.sourceListCtrl.getSelectionData().id
+	var sourceCodeDS = Data.open(sourceID)
+
+	var openFileInfo = this.openFileInfo[sourceID]
+	if !openFileInfo do
+		openFileInfo = OpenFileRecord([
+			scrollPosY = 0
+		])
+		this.openFileInfo.setAt(sourceID, openFileInfo)
+	end
+
+	sourceCodeDS.onchange = fn () do
+		var sourceID = this.sourceListCtrl.getSelectionData().id
+		if sourceCodeDS.datasetID == sourceID do
+			this.editorCtrl.data = sourceCodeDS.getValue()
+			this.program.invalidateGit()
+			this.realizeSourceList()
+			this.referenceCtrl.onsourcechange()
+		end
+	end
+
+	this.editorCtrl.data = sourceCodeDS.getValue()
+	this.editorCtrl.scrollPosY = openFileInfo.scrollPosY
+	this.editorCtrl.onchange = fn () do
+		sourceCodeDS.setValue(this.editorCtrl.data)
+		this.program.invalidateGit()
+		this.realizeSourceList()
+		this.referenceCtrl.onsourcechange()
+	end
+	this.referenceCtrl.onshowsource(sourceID, sourceCodeDS.name)
+
+	this.curFileID = sourceID
+end
+
+function WorkspaceUI.realizeSourceList () do
+	this.sourceListCtrl.realize(this.program.getSourceList(), this.program.readOnly)
+end
+
+function WorkspaceUI.sourceListCtrl.onselectionchange (e) do
+	var newFileID = this.sourceListCtrl.getSelectionData().id
+
+	if newFileID == this.curFileID do
+		return false
+	end
+
+	if this.curFileID do
+		var openFileInfo = this.openFileInfo[this.curFileID]
+		if !openFileInfo do
+			openFileInfo = OpenFileRecord([
+			])
+		end
+
+		openFileInfo.scrollPosY = this.editorCtrl.scrollPosY
+		this.openFileInfo.setAt(this.curFileID, openFileInfo)
+	end
+
+	this.realizeSource()
+end
