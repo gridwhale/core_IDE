@@ -39,7 +39,7 @@ class ReferenceUI [
 class IReferencePaneUI [
 	def control -> null
 	function onshowsource (fileID, filename) do end
-	function realize () do end
+	function realize ():Any do end
 ]
 
 function ReferenceUI.constructor (parent:IReferenceUIParent, program:ProgramClass) do
